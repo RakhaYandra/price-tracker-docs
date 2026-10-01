@@ -1,0 +1,68 @@
+name: docs-to-pdf
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check formal docs exist
+        run: |
+          for f in PRD ARCHITECTURE DESIGN-SYSTEM FSD SRS ADR SECURITY-GUIDE CODE-STYLE-GUIDE DATABASE-GUIDE API-GUIDE IMPLEMENTATION; do test -s "$f.md" || { echo "missing $f.md"; exit 1; }; done
+          echo "docs OK"
+      - name: Check README index
+        run: |
+          grep -q "PRD.md" README.md && grep -q "ARCHITECTURE.md" README.md \
+            && grep -q "DESIGN-SYSTEM.md" README.md && grep -q "FSD.md" README.md \
+            && grep -q "SRS.md" README.md && grep -q "ADR.md" README.md \
+            && grep -q "SECURITY-GUIDE.md" README.md \
+            && grep -q "CODE-STYLE-GUIDE.md" README.md \
+            && grep -q "DATABASE-GUIDE.md" README.md && grep -q "API-GUIDE.md" README.md \
+            && grep -q "IMPLEMENTATION.md" README.md \
+            || { echo "README index incomplete"; exit 1; }
+          echo "links OK"
+      - name: Check forbidden characters
+        run: |
+          # Box-drawing, geometric shapes, math symbols, and private-use
+          # characters have no glyphs in the PDF fonts (see AGENTS.md).
+          if rg -l '[\u2500-\u257f\u25a0-\u25ff\u2264\u2265\ue000-\uf8ff]' \
+            PRD.md ARCHITECTURE.md DESIGN-SYSTEM.md FSD.md SRS.md ADR.md \
+            SECURITY-GUIDE.md CODE-STYLE-GUIDE.md DATABASE-GUIDE.md \
+            API-GUIDE.md IMPLEMENTATION.md README.md AGENTS.md; then
+            echo "forbidden characters found"; exit 1;
+          fi
+          echo "chars OK"
+  pdf:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build PDFs
+        # xelatex (not pdflatex): tested in docs v0.1.0 pre-flight;
+        # box-drawing has no glyphs in Latin Modern, so docs are
+        # ASCII-safe except arrows (U+2190-U+2193) and em-dash.
+        run: |
+          mkdir -p pdf
+          for f in PRD ARCHITECTURE DESIGN-SYSTEM FSD SRS ADR SECURITY-GUIDE CODE-STYLE-GUIDE DATABASE-GUIDE API-GUIDE IMPLEMENTATION; do
+            docker run --rm -v "$PWD:/data" -w /data pandoc/latex:3.1 \
+              "$f.md" -o "pdf/PriceTracker-$f.pdf" --pdf-engine=xelatex \
+              -V geometry:margin=2.5cm --toc \
+              --metadata title="Price Tracker $f"
+          done
+          ls -la pdf/
+      - name: Check PDFs readable
+        run: |
+          for f in PRD ARCHITECTURE DESIGN-SYSTEM FSD SRS ADR SECURITY-GUIDE CODE-STYLE-GUIDE DATABASE-GUIDE API-GUIDE IMPLEMENTATION; do
+            test -s "pdf/PriceTracker-$f.pdf" || { echo "empty pdf/PriceTracker-$f.pdf"; exit 1; }
+          done
+          echo "PDFs OK"
+      - name: Release PDFs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" pdf/*.pdf \
+            --title "${{ github.ref_name }} - Price Tracker Documents" \
+            --notes "PRD, ARCHITECTURE, DESIGN-SYSTEM, FSD, SRS, ADR, SECURITY-GUIDE, CODE-STYLE-GUIDE, DATABASE-GUIDE, API-GUIDE, IMPLEMENTATION (PDF). Markdown sources available at this tag."

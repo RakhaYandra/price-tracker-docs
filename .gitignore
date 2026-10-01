@@ -1,0 +1,6 @@
+# CI build output (regenerated per tag, never commit)
+pdf/
+# Editor noise
+*.swp
+*~
+.DS_Store
